@@ -1,13 +1,7 @@
 import io
 import json
 import zipfile
-import pytest
 import pandas as pd
-from fastapi.testclient import TestClient
-
-from api.main import app
-
-client = TestClient(app)
 
 
 def _create_sample_csv_bytes():
@@ -47,7 +41,7 @@ def _create_sample_csv_bytes():
     }
 
 
-def test_status_endpoint():
+def test_status_endpoint(client):
     response = client.get("/api/datasets/status")
     assert response.status_code == 200
     data = response.json()
@@ -55,7 +49,7 @@ def test_status_endpoint():
     assert "asset_count" in data
 
 
-def test_upload_multiple_csvs_success():
+def test_upload_multiple_csvs_success(client):
     csv_dict = _create_sample_csv_bytes()
     files = [
         ("files", (name, io.BytesIO(content), "text/csv"))
@@ -70,7 +64,7 @@ def test_upload_multiple_csvs_success():
     assert data["controls_count"] == 2
 
 
-def test_upload_zip_success():
+def test_upload_zip_success(client):
     csv_dict = _create_sample_csv_bytes()
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
@@ -89,7 +83,7 @@ def test_upload_zip_success():
     assert data["asset_count"] == 2
 
 
-def test_upload_json_payload_success():
+def test_upload_json_payload_success(client):
     payload = {
         "assets": [
             {
@@ -137,7 +131,7 @@ def test_upload_json_payload_success():
     assert data["asset_count"] == 1
 
 
-def test_upload_missing_required_files():
+def test_upload_missing_required_files(client):
     # Only upload assets and controls
     csv_dict = _create_sample_csv_bytes()
     files = [
@@ -150,7 +144,7 @@ def test_upload_missing_required_files():
     assert "Missing required datasets" in response.json()["detail"]
 
 
-def test_upload_invalid_risk_reduction_pct():
+def test_upload_invalid_risk_reduction_pct(client):
     csv_dict = _create_sample_csv_bytes()
     # Replace controls with percentage > 1.0 (e.g. 80 instead of 0.8)
     csv_dict["controls.csv"] = (
@@ -168,7 +162,7 @@ def test_upload_invalid_risk_reduction_pct():
     assert "risk_reduction_pct" in response.json()["detail"]
 
 
-def test_upload_negative_financial_value():
+def test_upload_negative_financial_value(client):
     csv_dict = _create_sample_csv_bytes()
     csv_dict["assets.csv"] = (
         "asset_id,business_unit,criticality,data_sensitivity_tier,financial_value_usd,downtime_cost_per_hour_usd\n"
@@ -185,7 +179,7 @@ def test_upload_negative_financial_value():
     assert "Negative financial_value_usd" in response.json()["detail"]
 
 
-def test_load_demo_dataset():
+def test_load_demo_dataset(client):
     response = client.post("/api/datasets/demo")
     assert response.status_code == 200
     data = response.json()

@@ -1,16 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Shield, RefreshCw, Upload, BarChart3 } from 'lucide-react';
+import { Shield, RefreshCw, Upload, BarChart3, LogOut } from 'lucide-react';
 import { getHealth } from '../../api/client';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { useDataset } from '../../context/DatasetContext';
+import { useAuth } from '../../context/AuthContext';
 
 export const Header = ({ onRefreshAll, isRefreshing, activeTab, setActiveTab }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasDataset } = useDataset();
+  const { user, logout } = useAuth();
   const isInsightsPage = location.pathname === '/insights';
 
   const [backendOnline, setBackendOnline] = useState(null);
@@ -59,6 +61,19 @@ export const Header = ({ onRefreshAll, isRefreshing, activeTab, setActiveTab }) 
           {/* Right actions: Theme toggle + Upload New + Refresh Report */}
           <div className="flex items-center space-x-2.5">
             <ThemeToggle />
+
+            {user && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { logout(); navigate('/login', { replace: true }); }}
+                title={`Signed in as ${user.username} — sign out`}
+                className="text-xs font-medium gap-1.5"
+              >
+                <span className="hidden sm:inline max-w-[8rem] truncate">{user.username}</span>
+                <LogOut className="w-3.5 h-3.5" />
+              </Button>
+            )}
 
             {isInsightsPage ? (
               <>

@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from risk_engine.config import EngineConfig
 from risk_engine.ingest import DataIngestor, IngestionError
 from risk_engine.pipeline import RiskPipeline
+
+from api import db
+from api.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +133,17 @@ def _validate_dataframes(data: Dict[str, pd.DataFrame]) -> None:
         )
 
 
-def _process_and_save_data(data: Dict[str, pd.DataFrame], session_id: str) -> dict:
-    """Saves raw dataframes to a session folder and executes the risk pipeline."""
+def _process_and_save_data(data: Dict[str, pd.DataFrame], session_id: str, user_id: int) -> dict:
+    """Saves raw dataframes to a session folder and executes the risk pipeline.
+
+    Every run gets its OWN output directory (outputs/sessions/<session_id>/),
+    so one user's upload can never overwrite — or be silently served from —
+    another's. The session is registered in the database and marked active
+    for this user.
+    """
     session_dir = UPLOADS_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
+    session_out_dir = OUTPUT_DIR / "sessions" / session_id
 
     # Save CSVs to session upload directory
     for name, df in data.items():
@@ -142,7 +152,7 @@ def _process_and_save_data(data: Dict[str, pd.DataFrame], session_id: str) -> di
 
     # Execute risk pipeline
     try:
-        config = EngineConfig(data_dir=session_dir, output_dir=OUTPUT_DIR)
+        config = EngineConfig(data_dir=session_dir, output_dir=session_out_dir)
         pipeline = RiskPipeline(config=config)
         pipeline.run_all()
     except Exception as e:
@@ -152,14 +162,23 @@ def _process_and_save_data(data: Dict[str, pd.DataFrame], session_id: str) -> di
             detail=f"Risk engine execution failed: {str(e)}"
         )
 
-    # Record which dataset is active so endpoints that need the raw CSVs
-    # (compliance posture/gaps) follow the upload instead of the seed data.
+    # Register the session and make it active for this user. All downstream
+    # endpoints resolve their data dir through this record (see api/db.py).
     try:
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        with open(OUTPUT_DIR / "active_session.json", "w") as f:
-            json.dump({"session_id": session_id, "data_dir": str(session_dir)}, f)
+        dataset_id = db.create_dataset(
+            user_id=user_id,
+            session_id=session_id,
+            data_dir=str(session_dir),
+            output_dir=str(session_out_dir),
+            asset_count=int(len(data["assets"])),
+        )
+        db.set_active_dataset(user_id, dataset_id)
     except Exception as e:
-        logger.warning(f"Could not record active session: {e}")
+        logger.exception("Could not register dataset session in the database")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset processed but could not be registered: {str(e)}"
+        )
 
     return {
         "status": "success",
@@ -173,9 +192,10 @@ def _process_and_save_data(data: Dict[str, pd.DataFrame], session_id: str) -> di
     }
 
 
-@router.post("/upload")
+@router.post("/upload", dependencies=[Depends(get_current_user)])
 async def upload_datasets(
     files: List[UploadFile] = File(...),
+    user: dict = Depends(get_current_user),
 ):
     """
     Accepts dataset uploads in one of three formats:
@@ -250,7 +270,7 @@ async def upload_datasets(
     _validate_dataframes(data)
 
     # Process and run pipeline
-    return _process_and_save_data(data, session_id)
+    return _process_and_save_data(data, session_id, user["id"])
 
 
 class JsonDatasetPayload(BaseModel):
@@ -261,8 +281,8 @@ class JsonDatasetPayload(BaseModel):
     vulnerabilities: List[dict]
 
 
-@router.post("/upload-json")
-async def upload_json_dataset(payload: JsonDatasetPayload):
+@router.post("/upload-json", dependencies=[Depends(get_current_user)])
+async def upload_json_dataset(payload: JsonDatasetPayload, user: dict = Depends(get_current_user)):
     """Direct JSON payload upload endpoint."""
     data = {
         "assets": pd.DataFrame(payload.assets),
@@ -274,11 +294,11 @@ async def upload_json_dataset(payload: JsonDatasetPayload):
 
     _validate_dataframes(data)
     session_id = f"upload_json_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
-    return _process_and_save_data(data, session_id)
+    return _process_and_save_data(data, session_id, user["id"])
 
 
-@router.post("/demo")
-def load_demo_dataset():
+@router.post("/demo", dependencies=[Depends(get_current_user)])
+def load_demo_dataset(user: dict = Depends(get_current_user)):
     """Loads the authoritative built-in sample dataset from backend/data and runs the pipeline."""
     if not BASE_DATA_DIR.exists():
         raise HTTPException(
@@ -296,12 +316,13 @@ def load_demo_dataset():
         )
 
     session_id = f"demo_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-    return _process_and_save_data(raw_data, session_id)
+    return _process_and_save_data(raw_data, session_id, user["id"])
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(get_current_user)])
 def get_dataset_status():
     """Returns the current dataset and pipeline output readiness status."""
+    _, out_dir = db.current_paths()
     required_outputs = [
         "asset_risk_summary.parquet",
         "business_unit_risk_summary.parquet",
@@ -309,14 +330,14 @@ def get_dataset_status():
         "control_scenario_results.parquet"
     ]
 
-    all_exist = all((OUTPUT_DIR / f).exists() for f in required_outputs)
+    all_exist = db.has_session() and all((out_dir / f).exists() for f in required_outputs)
 
     asset_count = 0
     last_updated = None
 
     if all_exist:
         try:
-            asset_file = OUTPUT_DIR / "asset_risk_summary.parquet"
+            asset_file = out_dir / "asset_risk_summary.parquet"
             mtime = os.path.getmtime(asset_file)
             last_updated = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
             df = pd.read_parquet(asset_file)

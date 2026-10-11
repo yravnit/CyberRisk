@@ -25,16 +25,19 @@ try:  # pragma: no cover - depends on pandas internals
 except Exception:  # pandas layout changed; the guard is best-effort
     pass
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from risk_engine.investment_optimizer import optimize_investments
-from risk_engine.frontier import compute_frontier
-from risk_engine.framework_mapper import get_compliance_posture, get_compliance_gaps
+from api import db
+from api import auth as auth_api
+from api.auth import get_current_user
 from api.chat import router as chat_router
 from api.upload import router as upload_router
 from api.live_feed import router as live_feed_router
+from risk_engine.investment_optimizer import optimize_investments
+from risk_engine.frontier import compute_frontier
+from risk_engine.framework_mapper import get_compliance_posture, get_compliance_gaps
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -44,9 +47,31 @@ app = FastAPI(
     version="1.0.0",
 )
 
+@app.middleware("http")
+async def resolve_session(request: Request, call_next):
+    """Resolve the caller's active dataset into the request-scoped session.
+
+    Runs in the event loop, before FastAPI dispatches the endpoint to a
+    threadpool thread, so the ContextVar is inherited by every handler in
+    this request. Best-effort: authentication/401s stay the dependency's job.
+    """
+    try:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            user = auth_api.user_from_token(auth_header[7:].strip())
+            if user is not None:
+                dataset = db.get_active_dataset(user["id"])
+                if dataset:
+                    db.set_session_paths(dataset["data_dir"], dataset["output_dir"])
+    except Exception:
+        logger.exception("Session resolution middleware failed; falling back to seed data")
+    return await call_next(request)
+
+
 app.include_router(chat_router)
 app.include_router(upload_router)
 app.include_router(live_feed_router)
+app.include_router(auth_api.router)
 
 # --- CORS: required so the frontend dashboard (running on a different
 # port, e.g. localhost:3000 or localhost:5173) can call this API.
@@ -61,30 +86,18 @@ app.add_middleware(
 )
 
 # Output directory relative to this file
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-ACTIVE_SESSION_FILE = OUTPUT_DIR / "active_session.json"
 
 
 def active_asset_controls_path() -> Path:
     """
-    Path to the asset_controls.csv of the dataset currently loaded.
-
-    Upload and demo endpoints run the pipeline against their own session
-    directory, so compliance must follow whichever dataset is active rather
-    than always reading the seed CSVs. Falls back to the seed data when no
-    session has been recorded (e.g. pipeline run via CLI).
+    Path to the asset_controls.csv of the dataset currently active for the
+    caller. Every upload/demo registers its own session in the database
+    (api/db.py) and marks it active, so compliance posture follows the
+    uploader's dataset instead of always reading the seed CSVs. Falls back
+    to the seed data when no session is active (e.g. pipeline run via CLI).
     """
-    if ACTIVE_SESSION_FILE.exists():
-        try:
-            import json
-            with open(ACTIVE_SESSION_FILE, "r") as f:
-                candidate = Path(json.load(f)["data_dir"]) / "asset_controls.csv"
-            if candidate.exists():
-                return candidate
-        except Exception as e:
-            logger.warning(f"Could not read active session pointer: {e}")
-    return DATA_DIR / "asset_controls.csv"
+    return db.current_paths()[0] / "asset_controls.csv"
 
 
 def deployed_control_ids() -> set:
@@ -102,10 +115,14 @@ def deployed_control_ids() -> set:
 
 
 def load_parquet(filename: str) -> pd.DataFrame:
-    file_path = OUTPUT_DIR / filename
+    if not db.has_session():
+        raise FileNotFoundError(
+            "No dataset session is active for this user. Upload a dataset or load the demo dataset first."
+        )
+    file_path = db.current_paths()[1] / filename
     if not file_path.exists():
         raise FileNotFoundError(
-            f"Output file not found: {file_path}. Have you run `python -m risk_engine.pipeline`?"
+            f"Output file not found: {file_path}. Have you run `python -m risk_engine.pipeline` (or uploaded a dataset)?"
         )
     return pd.read_parquet(file_path)
 
@@ -129,7 +146,7 @@ def health_check():
     return {"status": "ok"}
 
 
-@app.get("/risk/assets")
+@app.get("/risk/assets", dependencies=[Depends(get_current_user)])
 def get_asset_risk_summary():
     """Returns risk metrics for all assets."""
     try:
@@ -142,7 +159,7 @@ def get_asset_risk_summary():
         _handle_load_error(e)
 
 
-@app.get("/risk/assets/{asset_id}")
+@app.get("/risk/assets/{asset_id}", dependencies=[Depends(get_current_user)])
 def get_asset_risk_detail(asset_id: str):
     """Returns detailed risk metrics for a single asset, including the Loss Exceedance Curve (if present)."""
     try:
@@ -175,7 +192,7 @@ def get_asset_risk_detail(asset_id: str):
         _handle_load_error(e)
 
 
-@app.get("/risk/business-units")
+@app.get("/risk/business-units", dependencies=[Depends(get_current_user)])
 def get_business_unit_risk():
     """Returns aggregated risk metrics per Business Unit."""
     try:
@@ -185,7 +202,7 @@ def get_business_unit_risk():
         _handle_load_error(e)
 
 
-@app.get("/risk/organization")
+@app.get("/risk/organization", dependencies=[Depends(get_current_user)])
 def get_organization_risk():
     """Returns top-level enterprise risk metrics."""
     try:
@@ -195,7 +212,7 @@ def get_organization_risk():
         _handle_load_error(e)
 
 
-@app.get("/controls/scenarios")
+@app.get("/controls/scenarios", dependencies=[Depends(get_current_user)])
 def get_all_scenarios():
     """Returns all control what-if scenarios."""
     try:
@@ -205,7 +222,7 @@ def get_all_scenarios():
         _handle_load_error(e)
 
 
-@app.get("/controls/roi")
+@app.get("/controls/roi", dependencies=[Depends(get_current_user)])
 def get_controls_roi():
     """Returns controls ranked by overall Return on Security Investment (ROSI)."""
     try:
@@ -223,7 +240,7 @@ def get_controls_roi():
         _handle_load_error(e)
 
 
-@app.get("/controls/optimize")
+@app.get("/controls/optimize", dependencies=[Depends(get_current_user)])
 def get_optimal_investment_plan(
     budget: float = Query(..., gt=0, description="Available security budget in USD"),
     one_control_per_asset: bool = Query(
@@ -259,7 +276,7 @@ def get_optimal_investment_plan(
 # Compliance Framework Mapping Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/compliance/posture")
+@app.get("/compliance/posture", dependencies=[Depends(get_current_user)])
 def get_compliance_posture_endpoint():
     """Returns compliance coverage posture across all mapped frameworks."""
     try:
@@ -271,7 +288,7 @@ def get_compliance_posture_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/compliance/gaps")
+@app.get("/compliance/gaps", dependencies=[Depends(get_current_user)])
 def get_compliance_gaps_endpoint():
     """Returns compliance gaps — framework requirements not covered by deployed controls."""
     try:
@@ -285,31 +302,35 @@ def get_compliance_gaps_endpoint():
 # Investment Efficient Frontier Endpoint
 # ---------------------------------------------------------------------------
 
-_frontier_cache = None
+# Frontier is expensive; cache per dataset output dir keyed by path so
+# different sessions (users) never see each other's cached curve.
+_frontier_cache: dict = {}
 
-@app.get("/controls/frontier")
+@app.get("/controls/frontier", dependencies=[Depends(get_current_user)])
 def get_investment_frontier():
     """Returns the efficient frontier data — optimizer results at multiple budget levels (cached)."""
-    global _frontier_cache
-    if _frontier_cache is not None:
-        return _frontier_cache
+    out_dir = db.current_paths()[1]
+    key = str(out_dir)
+    if key in _frontier_cache:
+        return _frontier_cache[key]
 
-    cache_file = OUTPUT_DIR / "frontier_cache.json"
+    cache_file = out_dir / "frontier_cache.json"
     if cache_file.exists():
         try:
             import json
             with open(cache_file, "r") as f:
-                _frontier_cache = json.load(f)
-            return _frontier_cache
+                _frontier_cache[key] = json.load(f)
+            return _frontier_cache[key]
         except Exception as e:
             logger.warning(f"Error reading frontier cache: {e}")
 
     try:
         scenarios = load_parquet("control_scenario_results.parquet")
         frontier = compute_frontier(scenarios)
-        _frontier_cache = frontier
+        _frontier_cache[key] = frontier
         try:
             import json
+            out_dir.mkdir(parents=True, exist_ok=True)
             with open(cache_file, "w") as f:
                 json.dump(frontier, f)
         except Exception:
@@ -323,7 +344,7 @@ def get_investment_frontier():
 # Risk Trend Endpoint
 # ---------------------------------------------------------------------------
 
-@app.get("/risk/trend")
+@app.get("/risk/trend", dependencies=[Depends(get_current_user)])
 def get_risk_trend():
     """Returns historical risk trend data for visualization."""
     try:
@@ -337,7 +358,7 @@ def get_risk_trend():
 # ML Predictions Endpoint
 # ---------------------------------------------------------------------------
 
-@app.get("/predictions/vulnerabilities")
+@app.get("/predictions/vulnerabilities", dependencies=[Depends(get_current_user)])
 def get_vuln_predictions():
     """Returns ML vulnerability exploitation predictions."""
     try:
@@ -347,14 +368,15 @@ def get_vuln_predictions():
         _handle_load_error(e)
 
 
-@app.get("/predictions/threat-forecast")
+@app.get("/predictions/threat-forecast", dependencies=[Depends(get_current_user)])
 def get_threat_forecast(horizon_days: int = 14):
     """
     Returns sequential time neural network (LSTM) Threat Event Frequency (TEF) forecasts,
     forward attack surge trajectories, and MITRE ATT&CK technique transition probabilities.
     """
     import json
-    forecast_file = OUTPUT_DIR / "threat_forecast.json"
+    data_dir, out_dir = db.current_paths()
+    forecast_file = out_dir / "threat_forecast.json"
     
     # If cached file exists, return it
     if forecast_file.exists():
@@ -368,7 +390,6 @@ def get_threat_forecast(horizon_days: int = 14):
     # Otherwise compute on-the-fly from threat_events data
     try:
         from risk_engine.threat_forecaster import ThreatSequenceForecaster
-        data_dir = Path(__file__).resolve().parent.parent / "data"
         threat_events_path = data_dir / "threat_events.csv"
         
         if not threat_events_path.exists():
@@ -378,7 +399,7 @@ def get_threat_forecast(horizon_days: int = 14):
         forecaster = ThreatSequenceForecaster(window_size=7, forecast_horizon=horizon_days)
         result = forecaster.train_and_forecast(df)
         
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        out_dir.mkdir(parents=True, exist_ok=True)
         with open(forecast_file, "w") as f:
             json.dump(result, f, indent=2)
             
@@ -394,29 +415,40 @@ def get_threat_forecast(horizon_days: int = 14):
 # Asset Dependency & Systemic Risk (Active Directory Graph) Endpoints
 # ---------------------------------------------------------------------------
 
-_graph_engine = None
+# One engine per (data_dir, output_dir): the graph is derived purely from the
+# dataset, so it can be shared across requests against the same session.
+# Replaces the old single process-global engine that leaked the first
+# requester's topology to every other client.
+_dependency_engines: dict = {}
+
 
 def _get_graph_engine():
-    global _graph_engine
-    if _graph_engine is None:
+    data_dir, out_dir = db.current_paths()
+    key = (str(data_dir), str(out_dir))
+    engine = _dependency_engines.get(key)
+    if engine is None:
         from risk_engine.dependency_graph import DependencyGraphEngine
-        _graph_engine = DependencyGraphEngine()
-        _graph_engine.build_graph()
-    return _graph_engine
+        engine = DependencyGraphEngine()
+        engine.build_graph(data_dir=str(data_dir), output_dir=str(out_dir))
+        if len(_dependency_engines) > 8:  # ponytail: small cache, sessions are few
+            _dependency_engines.clear()
+        _dependency_engines[key] = engine
+    return engine
 
 
-@app.get("/risk/dependency-graph")
+@app.get("/risk/dependency-graph", dependencies=[Depends(get_current_user)])
 def get_dependency_graph():
     """Returns the Active Directory trust & lateral movement dependency graph."""
     try:
+        data_dir, out_dir = db.current_paths()
         engine = _get_graph_engine()
-        return engine.build_graph()
+        return engine.build_graph(data_dir=str(data_dir), output_dir=str(out_dir))
     except Exception as e:
         logger.exception("Error building dependency graph")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/risk/dependency-graph/propagate")
+@app.get("/risk/dependency-graph/propagate", dependencies=[Depends(get_current_user)])
 def get_risk_propagation(
     breached_asset_id: str = Query(..., description="Initial breached asset ID, e.g. AST-1000")
 ):
@@ -474,7 +506,7 @@ def _portfolio_lec_curve(df: pd.DataFrame) -> list:
     ]
 
 
-@app.get("/risk/portfolio-lec")
+@app.get("/risk/portfolio-lec", dependencies=[Depends(get_current_user)])
 def get_portfolio_lec():
     """
     Returns the enterprise-wide Loss Exceedance Curve (LEC), aggregated from the

@@ -3,11 +3,13 @@ import logging
 import os
 import re
 from typing import List, Literal, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import pandas as pd
 
 from pathlib import Path
+
+from api.auth import get_current_user
 
 try:
     from dotenv import load_dotenv
@@ -241,7 +243,7 @@ def get_hf_client():
     return OpenAI(base_url=HF_BASE_URL, api_key=hf_token)
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(get_current_user)])
 def chat_with_assistant(req: ChatRequest):
     client = get_hf_client()
 

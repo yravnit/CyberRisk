@@ -9,6 +9,12 @@ export const DatasetProvider = ({ children }) => {
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
 
   const checkStatus = useCallback(async () => {
+    // /api/* endpoints require auth; skip the probe when signed out so the
+    // login page doesn't trigger a 401 on every mount.
+    if (!localStorage.getItem('cyberrisk_token')) {
+      setIsCheckingStatus(false);
+      return;
+    }
     try {
       const status = await getDatasetStatus();
       if (status?.outputs_ready) {

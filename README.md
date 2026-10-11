@@ -48,6 +48,7 @@ Users can upload their own enterprise cyber telemetry (5 CSV files, a ZIP bundle
 - **ROSI Benchmark Analytics:** Dollar-for-dollar Return on Security Investment for both currently deployed and candidate controls (EDR, MFA, Network Segmentation, Patching, SIEM), computed via full before/after re-simulation, not a flat formula.
 - **Knapsack ILP Investment Optimizer:** Solves an exact budget-constrained 0/1 knapsack optimization to identify the mathematically optimal set of security investments, benchmarked against a naive greedy (sort-by-ROSI) baseline.
 - **AI Risk Copilot:** An embedded conversational assistant with live access to the organization's quantified risk metrics, able to answer natural-language questions like "What's our biggest risk right now?"
+- **User Accounts & Session Isolation:** Email-free username/password accounts with PBKDF2-hashed credentials and signed bearer tokens; every data endpoint requires authentication. Each upload or demo run is an isolated, owned dataset session — one user's data is never served to another — recorded in a persistent database.
 - **Responsive Dashboard:** Executive and technical views with drill-down asset inspection, business-unit risk charts, compliance radar, ML exploitation toggles, investment frontier curves, and a live "what-if budget" optimizer panel.
 
 ---
@@ -56,6 +57,7 @@ Users can upload their own enterprise cyber telemetry (5 CSV files, a ZIP bundle
 
 - **Frontend:** React 18, Vite, TailwindCSS, Recharts, Lucide Icons, Axios, React Router DOM
 - **Backend:** Python 3.10+, FastAPI, Uvicorn, Pydantic, python-multipart (file upload handling)
+- **Authentication & Persistence:** SQLAlchemy Core (SQLite by default, PostgreSQL-compatible schema), itsdangerous (signed tokens), PBKDF2-HMAC-SHA256 password hashing (stdlib hashlib)
 - **Machine Learning & Predictive Modeling:** Scikit-learn (Random Forest Classifier, Cross-Validation), XGBoost (Gradient Boosted Trees), PyTorch (Sequential 2-layer LSTM Recurrent Neural Network for Threat Event Frequency & MITRE Attack Sequence Forecasting)
 - **Quantitative Engine & Mathematics:** NumPy, SciPy, Pandas, PyArrow (Parquet), PuLP (COIN-OR CBC ILP Solver)
 - **AI / LLM:** Google Gemini API, called from the backend (never exposed to the browser) with the live computed risk data supplied as context for each query
@@ -64,9 +66,7 @@ Users can upload their own enterprise cyber telemetry (5 CSV files, a ZIP bundle
 
 ### A Note on the Database
 
-For the hackathon prototype, uploaded datasets and session state are currently held in the frontend's local/session storage for simplicity, and computed risk outputs are written to Parquet files on the backend. This works for a single-user demo but is not durable or multi-user-safe.
-
-**Recommended production setup:** **PostgreSQL** as the primary database for asset, vulnerability, control, and user/session data — a relational database fits well here because assets, vulnerabilities, and controls have genuine foreign-key relationships, and ACID guarantees matter for an auditable, compliance-oriented tool (RBI CSF / SEBI CSCRF reporting requires trustworthy record-keeping). Alongside it, an **object storage layer** (e.g. S3-compatible storage, or local disk for a self-hosted deployment) should hold raw uploaded dataset files and the computed Parquet risk outputs, since those are large, columnar, and better suited to file-based analytical storage than to being stuffed into relational rows. This hybrid (PostgreSQL for relational/transactional data + object storage for bulk files) is the standard pattern for this kind of analytical platform, and is listed under Future Scope below.
+User accounts and dataset sessions are stored in a relational database via SQLAlchemy Core (`backend/api/db.py`) — SQLite by default (`backend/data/cyberrisk.db`, created automatically on first boot). One row per user (PBKDF2-hashed credentials, active-dataset pointer) and one row per uploaded/processed dataset (session id, data directory, output directory, asset count). Set `DATABASE_URL` (e.g. `postgresql+psycopg2://…`) to run the same schema on PostgreSQL for a production deployment — a relational database fits this domain because assets, vulnerabilities, and controls have genuine foreign-key relationships, and ACID guarantees matter for an auditable, compliance-oriented tool (RBI CSF / SEBI CSCRF reporting requires trustworthy record-keeping). Large raw uploads and computed Parquet outputs stay on disk under `backend/data/uploads/` and `backend/outputs/sessions/`.
 
 ---
 
@@ -86,6 +86,7 @@ React Dashboard & Dataset Upload Portal (Vite + Tailwind + Recharts)
       │
       ▼ (REST API / CORS)
 FastAPI Backend (api/main.py)
+      ├── /api/auth/*                  (register/login/me — bearer token auth)
       ├── /api/datasets/upload         (dataset ingestion & schema validation)
       ├── /risk/*                      (asset, business-unit, org risk summaries + loss curves)
       ├── /risk/trend                  (historical risk trajectory & EAL reduction trends)
@@ -302,11 +303,11 @@ pytest -v
 
 ## 13. Future Scope
 
-- **Persistent, Multi-User Data Layer:** Migrate from the current local/session storage prototype to PostgreSQL (relational asset/vulnerability/control data) plus object storage (raw uploads and Parquet outputs), as detailed under Technology Stack above.
+- **Persistent, Multi-User Data Layer:** The relational core is in place (SQLAlchemy Core, `users` + `datasets`); production would move it to PostgreSQL via `DATABASE_URL` and add an object storage layer (S3-compatible) for raw uploads and Parquet outputs.
 - **Real-Time SIEM & EDR Webhook Ingestion:** Direct streaming connectors for tools like Splunk, Microsoft Sentinel, and CrowdStrike Falcon for continuous automated EAL recalculation instead of manual dataset upload.
 - **Automated Regulatory Reporting Exports:** One-click generation of audit-ready compliance filing reports (PDF/XBRL) specifically formatted for RBI Cyber Security audits and SEBI CSCRF annual submissions.
 - **Modeling Correlated/Systemic Risk:** Move beyond the current independence assumption for EAL/VaR aggregation to account for events (e.g. ransomware) that can affect multiple assets simultaneously.
-- **Multi-Tenant Enterprise RBAC:** Role-based access control with granular organizational permissions for large enterprise fleets.
+- **Multi-Tenant Enterprise RBAC:** Role-based access control with granular organizational permissions on top of the current account model.
 - **Cloud Infrastructure Auto-Discovery:** Automated asset synchronization with AWS, Azure, and GCP asset inventories.
 
 ---

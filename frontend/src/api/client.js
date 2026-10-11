@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const TOKEN_KEY = 'cyberrisk_token';
 
 export const apiClient = axios.create({
   baseURL,
@@ -9,6 +10,52 @@ export const apiClient = axios.create({
   },
   timeout: 60000,
 });
+
+// Attach the bearer token to every API call.
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+// On 401 the token is missing/invalid/expired: clear it and send the user
+// back to the login screen (no redirect loop when already there).
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login');
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+/**
+ * Auth: register a new account (returns { token, user })
+ */
+export const registerUser = async (username, password) => {
+  const response = await apiClient.post('/api/auth/register', { username, password });
+  return response.data;
+};
+
+/**
+ * Auth: log in (returns { token, user })
+ */
+export const loginUser = async (username, password) => {
+  const response = await apiClient.post('/api/auth/login', { username, password });
+  return response.data;
+};
+
+/**
+ * Auth: current user profile
+ */
+export const getMe = async () => {
+  const response = await apiClient.get('/api/auth/me');
+  return response.data;
+};
 
 /**
  * Health check endpoint
@@ -228,13 +275,15 @@ export const getPortfolioLec = async () => {
 };
 
 /**
- * Constructs the WebSocket endpoint URL for live streaming threat telemetry
+ * Constructs the WebSocket endpoint URL for live streaming threat telemetry.
+ * Browsers cannot set Authorization headers on WebSocket handshakes, so the
+ * bearer token travels as a query parameter.
  */
-export const getLiveFeedWsUrl = () => {
+export const getLiveFeedWsUrl = (token) => {
   const httpUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
   const wsProtocol = httpUrl.startsWith('https') ? 'wss' : 'ws';
   const cleanBase = httpUrl.replace(/^https?:\/\//, '');
-  return `${wsProtocol}://${cleanBase}/ws/live-feed`;
+  return `${wsProtocol}://${cleanBase}/ws/live-feed?token=${encodeURIComponent(token || '')}`;
 };
 
 /**

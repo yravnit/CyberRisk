@@ -27,7 +27,13 @@ class DependencyGraphEngine:
         self.edges: List[dict] = []
         self._built = False
 
-    def build_graph(self, assets_df: Optional[pd.DataFrame] = None, seed: Optional[int] = None) -> dict:
+    def build_graph(
+        self,
+        assets_df: Optional[pd.DataFrame] = None,
+        seed: Optional[int] = None,
+        data_dir: Optional[Path] = None,
+        output_dir: Optional[Path] = None,
+    ) -> dict:
         """
         Constructs the AD topology from the current asset inventory.
 
@@ -35,10 +41,13 @@ class DependencyGraphEngine:
         criticality) rather than observed network telemetry. `seed` makes the
         inference reproducible so the same inventory always yields the same
         graph — without it the topology silently reshuffles between reloads.
+
+        `data_dir` / `output_dir` point at the active session's dataset; the
+        module-level constants (seed data + root outputs/) are the fallback.
         """
         rng = random.Random(seed if seed is not None else 42)
         if assets_df is None or assets_df.empty:
-            assets_path = DATA_DIR / "assets.csv"
+            assets_path = (Path(data_dir) if data_dir else DATA_DIR) / "assets.csv"
             if assets_path.exists():
                 assets_df = pd.read_csv(assets_path)
             else:
@@ -49,7 +58,7 @@ class DependencyGraphEngine:
 
         # Load risk summary if available for actual financial values
         risk_map = {}
-        risk_parquet = OUTPUT_DIR / "asset_risk_summary.parquet"
+        risk_parquet = (Path(output_dir) if output_dir else OUTPUT_DIR) / "asset_risk_summary.parquet"
         if risk_parquet.exists():
             try:
                 rdf = pd.read_parquet(risk_parquet)

@@ -36,6 +36,11 @@ backend/outputs/
 # upload/demo call; nothing here is source data.
 backend/data/uploads/
 
+# Auth DB (SQLite) and the persisted token-signing secret. Both are
+# regenerated on a fresh clone; never commit real credentials.
+backend/data/cyberrisk.db
+backend/data/.auth_secret
+
 # ── Frontend generated / tool caches ────────────────────────────────────
 frontend/dist/
 frontend/.oxlintcache/

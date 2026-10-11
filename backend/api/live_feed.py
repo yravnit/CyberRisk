@@ -8,32 +8,37 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
+
+from api import db
+from api.auth import get_current_user, user_from_token
 
 logger = logging.getLogger("uvicorn.error")
 
 router = APIRouter(tags=["Live Streaming Feed"])
 
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
-# In-memory store for real-time asset risk state
-_asset_risk_state: Dict[str, dict] = {}
+# In-memory store of real-time asset risk state, keyed by the output dir of
+# the session it was loaded from — so a new upload never inherits the
+# previous dataset's mutated state, and concurrent sessions stay separate.
+_asset_risk_state: Dict[str, Dict[str, dict]] = {}
 _event_history: List[dict] = []
 MAX_EVENT_HISTORY = 50
 
 
 def _load_initial_asset_risk() -> Dict[str, dict]:
     """Load latest asset risk summaries into in-memory state."""
-    global _asset_risk_state
-    if not _asset_risk_state:
+    out_dir = str(db.current_paths()[1])
+    if out_dir not in _asset_risk_state:
+        state: Dict[str, dict] = {}
         try:
-            parquet_path = OUTPUT_DIR / "asset_risk_summary.parquet"
+            parquet_path = Path(out_dir) / "asset_risk_summary.parquet"
             if parquet_path.exists():
                 df = pd.read_parquet(parquet_path)
                 for _, row in df.iterrows():
                     aid = str(row.get("asset_id"))
-                    _asset_risk_state[aid] = {
+                    state[aid] = {
                         "asset_id": aid,
                         "business_unit": str(row.get("business_unit", "Operations")),
                         "criticality": float(row.get("criticality", 3)),
@@ -44,7 +49,8 @@ def _load_initial_asset_risk() -> Dict[str, dict]:
                     }
         except Exception as e:
             logger.warning(f"Could not load asset risk parquet for live feed: {e}")
-    return _asset_risk_state
+        _asset_risk_state[out_dir] = state
+    return _asset_risk_state[out_dir]
 
 
 EVENT_TEMPLATES = [
@@ -177,7 +183,7 @@ def generate_live_event() -> dict:
     return event
 
 
-@router.get("/api/live-feed/recent")
+@router.get("/api/live-feed/recent", dependencies=[Depends(get_current_user)])
 def get_recent_events():
     """Returns recent streamed threat events for initial load or polling fallback."""
     if not _event_history:
@@ -195,9 +201,23 @@ async def live_feed_websocket(websocket: WebSocket):
     """
     WebSocket streaming endpoint emitting simulated live enterprise threat telemetry
     and incremental per-asset FAIR risk re-computations every 3-8 seconds.
+
+    Browsers cannot set Authorization headers on WebSocket handshakes, so the
+    bearer token is passed as a ?token= query parameter instead.
     """
+    user = user_from_token(websocket.query_params.get("token"))
+    if user is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized")
+        return
+
     await websocket.accept()
     logger.info("Live threat feed WebSocket client connected.")
+
+    # Resolve this user's active dataset inside the event-loop task so the
+    # simulated events are drawn from their asset list (see api/db.py).
+    dataset = db.get_active_dataset(user["id"])
+    if dataset:
+        db.set_session_paths(dataset["data_dir"], dataset["output_dir"])
 
     # Send initial welcome message and initial recent events
     initial_event = generate_live_event()

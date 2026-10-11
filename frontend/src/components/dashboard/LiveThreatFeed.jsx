@@ -19,8 +19,10 @@ import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { formatCurrency, getLiveFeedWsUrl, getRecentLiveEvents } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 
 export const LiveThreatFeed = ({ onAssetRiskUpdate }) => {
+  const { token } = useAuth();
   const [events, setEvents] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -41,7 +43,7 @@ export const LiveThreatFeed = ({ onAssetRiskUpdate }) => {
 
     const connectWebSocket = () => {
       try {
-        const wsUrl = getLiveFeedWsUrl();
+        const wsUrl = getLiveFeedWsUrl(token);
         const socket = new WebSocket(wsUrl);
         wsRef.current = socket;
 
@@ -122,7 +124,7 @@ export const LiveThreatFeed = ({ onAssetRiskUpdate }) => {
         wsRef.current.close();
       }
     };
-  }, [onAssetRiskUpdate]);
+  }, [token, onAssetRiskUpdate]);
 
   const filteredEvents = events.filter((ev) => {
     if (severityFilter === 'ALL') return true;
