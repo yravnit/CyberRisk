@@ -19,7 +19,7 @@ import {
   CartesianGrid,
   Cell,
 } from 'recharts';
-import { getOptimizedPlan, formatCurrency, formatPercent, formatMultiplier } from '../../api/client';
+import { getOptimizedPlan, formatCurrency, formatCompactCurrency, formatPercent, formatMultiplier } from '../../api/client';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -309,7 +309,7 @@ export const WhatIfOptimizer = ({ orgEal = 0 }) => {
                 Exact Knapsack vs Naive Greedy Selection
               </h3>
               <p className="text-sm text-white/90 leading-relaxed max-w-lg">
-                At your ${formatCurrency(budget)} capital budget, the mathematical solver delivers an additional{' '}
+                At your {formatCurrency(budget)} capital budget, the mathematical solver delivers an additional{' '}
                 <strong className="text-white font-bold underline decoration-th-accent-sec decoration-2">
                   {formatCurrency(Math.max(0, ilpAdvantageUsd))}
                 </strong>{' '}
@@ -351,7 +351,7 @@ export const WhatIfOptimizer = ({ orgEal = 0 }) => {
                     <YAxis
                       stroke="var(--chart-axis)"
                       fontSize={11}
-                      tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      tickFormatter={(v) => formatCompactCurrency(v)}
                       tickLine={false}
                       axisLine={false}
                     />

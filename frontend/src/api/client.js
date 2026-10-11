@@ -238,9 +238,9 @@ export const getLiveFeedWsUrl = () => {
 };
 
 /**
- * Currency formatter: $1,234,567
+ * Default (base-currency) formatter: $1,234,567
  */
-export const formatCurrency = (val) => {
+const defaultCurrencyFormatter = (val) => {
   if (val === null || val === undefined || isNaN(Number(val))) return '$0';
   const num = Math.round(Number(val));
   return new Intl.NumberFormat('en-US', {
@@ -249,6 +249,41 @@ export const formatCurrency = (val) => {
     maximumFractionDigits: 0,
   }).format(num);
 };
+
+/**
+ * Default compact formatter for chart axes.
+ */
+const defaultCompactFormatter = (val) => {
+  const num = Number(val) || 0;
+  const abs = Math.abs(num);
+  if (abs >= 1e9) return `$${(num / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `$${(num / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `$${(num / 1e3).toFixed(0)}k`;
+  return `$${Math.round(num)}`;
+};
+
+let currencyFormatterImpl = defaultCurrencyFormatter;
+let compactFormatterImpl = defaultCompactFormatter;
+
+/**
+ * Register the active currency formatters. Called by CurrencyProvider whenever
+ * the selected currency or exchange rates change, so every `formatCurrency`
+ * call site across the app stays in sync without prop drilling.
+ */
+export const setCurrencyFormatters = ({ format, formatCompact } = {}) => {
+  currencyFormatterImpl = typeof format === 'function' ? format : defaultCurrencyFormatter;
+  compactFormatterImpl = typeof formatCompact === 'function' ? formatCompact : defaultCompactFormatter;
+};
+
+/**
+ * Currency formatter: $1,234,567 (follows the active display currency).
+ */
+export const formatCurrency = (val) => currencyFormatterImpl(val);
+
+/**
+ * Compact currency formatter for chart axes: $1.5M, €250k …
+ */
+export const formatCompactCurrency = (val) => compactFormatterImpl(val);
 
 /**
  * Percentage formatter: 94.2%

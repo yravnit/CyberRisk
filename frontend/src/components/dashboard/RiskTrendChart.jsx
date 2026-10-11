@@ -1,7 +1,7 @@
 import React from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
-import { formatCurrency } from '../../api/client';
+import { formatCurrency, formatCompactCurrency } from '../../api/client';
 import { TrendingDown, ShieldAlert } from 'lucide-react';
 
 export const RiskTrendChart = ({ data, loading, error, onRetry }) => {
@@ -128,7 +128,7 @@ export const RiskTrendChart = ({ data, loading, error, onRetry }) => {
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: '#9ca3af', fontSize: 12 }}
-                tickFormatter={(val) => `$${(val / 1000000).toFixed(1)}M`}
+                tickFormatter={(val) => formatCompactCurrency(val)}
                 width={70}
               />
               <Tooltip content={<CustomTooltip />} />

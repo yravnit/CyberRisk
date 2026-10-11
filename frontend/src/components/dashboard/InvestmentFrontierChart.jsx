@@ -1,7 +1,7 @@
 import React from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
-import { formatCurrency } from '../../api/client';
+import { formatCurrency, formatCompactCurrency } from '../../api/client';
 import { ShieldAlert, Info } from 'lucide-react';
 
 export const InvestmentFrontierChart = ({ data, loading, error, onRetry }) => {
@@ -67,15 +67,6 @@ export const InvestmentFrontierChart = ({ data, loading, error, onRetry }) => {
   const kneePoint = points[kneeIndex] || points[Math.floor(points.length / 2)];
   
   const ilpAdvantage = (kneePoint.risk_reduction_usd || 0) - (kneePoint.greedy_risk_reduction_usd || 0);
-
-  const formatCompactCurrency = (value) => {
-    if (value >= 1000000) {
-      return `$${(value / 1000000).toFixed(1)}M`;
-    } else if (value >= 1000) {
-      return `$${(value / 1000).toFixed(0)}K`;
-    }
-    return `$${value}`;
-  };
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {

@@ -10,7 +10,7 @@ import {
   Cell,
 } from 'recharts';
 import { Building2, Layers } from 'lucide-react';
-import { formatCurrency } from '../../api/client';
+import { formatCurrency, formatCompactCurrency } from '../../api/client';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -118,7 +118,7 @@ export const BusinessUnitChart = ({ data = [], loading, error, onRetry }) => {
             <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
             <XAxis
               type="number"
-              tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
+              tickFormatter={(val) => formatCompactCurrency(val)}
               stroke="var(--chart-axis)"
               fontSize={11}
               tickLine={false}

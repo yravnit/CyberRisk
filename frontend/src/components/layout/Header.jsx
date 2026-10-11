@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Shield, RefreshCw, Upload, BarChart3 } from 'lucide-react';
 import { getHealth } from '../../api/client';
 import { ThemeToggle } from '../ui/ThemeToggle';
+import { CurrencySelector } from '../ui/CurrencySelector';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { useDataset } from '../../context/DatasetContext';
@@ -55,8 +56,9 @@ export const Header = ({ onRefreshAll, isRefreshing, activeTab, setActiveTab }) 
             </div>
           </div>
 
-          {/* Right actions: Theme toggle + Upload New + Refresh Report */}
+          {/* Right actions: Currency + Theme toggle + Upload New + Refresh Report */}
           <div className="flex items-center space-x-2.5">
+            <CurrencySelector />
             <ThemeToggle />
 
             {isInsightsPage ? (

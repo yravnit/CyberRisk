@@ -15,7 +15,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
-import { getAssetDetail, getVulnPredictions, formatCurrency } from '../../api/client';
+import { getAssetDetail, getVulnPredictions, formatCurrency, formatCompactCurrency } from '../../api/client';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -207,7 +207,7 @@ export const AssetDetailPanel = ({ assetId, onClose }) => {
                       <YAxis
                         stroke="var(--chart-axis)"
                         fontSize={11}
-                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                        tickFormatter={(v) => formatCompactCurrency(v)}
                         tickLine={false}
                         axisLine={false}
                       />

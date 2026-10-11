@@ -11,7 +11,7 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 import { Badge } from '../ui/Badge';
-import { formatCurrency } from '../../api/client';
+import { formatCurrency, formatCompactCurrency } from '../../api/client';
 import { TrendingUp, ShieldAlert, AlertCircle, Info, Landmark } from 'lucide-react';
 
 export const PortfolioLECChart = ({ data, loading, error, onRetry }) => {
@@ -141,7 +141,7 @@ export const PortfolioLECChart = ({ data, loading, error, onRetry }) => {
               <YAxis
                 stroke="var(--chart-axis, #64748b)"
                 fontSize={11}
-                tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`}
+                tickFormatter={(v) => formatCompactCurrency(v)}
                 tickLine={false}
                 axisLine={false}
               />

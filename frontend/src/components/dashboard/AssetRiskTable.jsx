@@ -192,9 +192,9 @@ export const AssetRiskTable = ({
                 size="sm"
                 className="hidden md:inline-flex whitespace-nowrap"
                 onClick={() => setShowZeroRisk(!showZeroRisk)}
-                title={showZeroRisk ? 'Hide assets with $0 EAL' : 'Show assets with $0 EAL'}
+                title={showZeroRisk ? `Hide assets with ${formatCurrency(0)} EAL` : `Show assets with ${formatCurrency(0)} EAL`}
               >
-                {showZeroRisk ? 'Hide $0 EAL' : `+${zeroRiskAssetsCount} Zero-Risk`}
+                {showZeroRisk ? `Hide ${formatCurrency(0)} EAL` : `+${zeroRiskAssetsCount} Zero-Risk`}
               </Button>
             )}
           </div>
@@ -331,7 +331,7 @@ export const AssetRiskTable = ({
                             className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono text-th-text-muted bg-th-surface-el border border-th-border"
                             title="Zero quantified baseline risk"
                           >
-                            $0 EAL
+                            {formatCurrency(0)} EAL
                           </span>
                         )}
                       </div>
@@ -410,7 +410,7 @@ export const AssetRiskTable = ({
             onClick={() => setShowZeroRisk(!showZeroRisk)}
             className="self-start sm:self-auto whitespace-nowrap"
           >
-            <span>{showZeroRisk ? 'Hide $0 EAL Assets' : `Show ${zeroRiskAssetsCount} Zero-Risk Assets`}</span>
+            <span>{showZeroRisk ? `Hide ${formatCurrency(0)} EAL Assets` : `Show ${zeroRiskAssetsCount} Zero-Risk Assets`}</span>
             {showZeroRisk ? (
               <ChevronUp className="w-4 h-4 ml-1.5 text-th-brand" />
             ) : (

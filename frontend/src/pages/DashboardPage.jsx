@@ -9,6 +9,7 @@ import { ControlsROIChart } from '../components/dashboard/ControlsROIChart';
 import { WhatIfOptimizer } from '../components/dashboard/WhatIfOptimizer';
 import { ChatWidget } from '../components/chatbot/ChatWidget';
 import { useApi } from '../hooks/useApi';
+import { useCurrency } from '../context/CurrencyContext';
 import { Card, CardContent } from '../components/ui/Card';
 import { ComplianceDashboard } from '../components/dashboard/ComplianceDashboard';
 import { RiskTrendChart } from '../components/dashboard/RiskTrendChart';
@@ -33,6 +34,10 @@ export function DashboardPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [realtimeAssetOverrides, setRealtimeAssetOverrides] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Subscribes the dashboard to currency changes so every monetary figure
+  // re-renders (and re-formats) when the display currency is switched.
+  const { currency } = useCurrency();
 
   // API hooks
   const orgRisk = useApi(getOrgRisk);
@@ -86,7 +91,10 @@ export function DashboardPage() {
   const orgEal = orgRisk.data?.eal_usd ?? orgRisk.data?.EAL_usd ?? 0;
 
   return (
-    <div className="min-h-screen flex flex-col font-sans theme-transition bg-th-bg">
+    <div
+      className="min-h-screen flex flex-col font-sans theme-transition bg-th-bg"
+      data-currency={currency}
+    >
       {/* Top Navigation */}
       <Header
         onRefreshAll={handleRefreshAll}
