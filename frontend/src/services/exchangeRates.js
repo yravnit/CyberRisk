@@ -14,6 +14,14 @@ const CACHE_KEY = 'cyberrisk.fx.v1';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const FETCH_TIMEOUT_MS = 8000;
 
+// Backend base URL — the FastAPI service exposes /currency/rates so rates can
+// be fetched (and cached server-side). Falls back to the upstream provider
+// directly when the backend is unreachable.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(
+  /\/$/,
+  '',
+);
+
 /**
  * Currencies exposed in the selector. Only codes the Frankfurter API supports
  * (ECB reference set) are included so live lookups always resolve.
@@ -121,11 +129,10 @@ function writeCache(rates, fetchedAt, date) {
  * @returns {Promise<{base:string, rates:Object<string,number>, status:string,
  *   updatedAt:number, date:string|null, source:string}>}
  */
-export async function fetchRates() {
+async function fetchJson(url, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const url = `${FX_ENDPOINT}?from=${FX_BASE}&to=${TARGET_CODES.join(',')}`;
     const res = await fetch(url, {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
@@ -133,21 +140,56 @@ export async function fetchRates() {
     if (!res.ok) {
       throw new Error(`FX request failed with status ${res.status}`);
     }
-    const payload = await res.json();
-    const fetchedAt = Date.now();
-    const date = payload?.date || null;
-
-    const rates = { [FX_BASE]: 1 };
-    TARGET_CODES.forEach((code) => {
-      const value = Number(payload?.rates?.[code]);
-      rates[code] = Number.isFinite(value) && value > 0 ? value : FALLBACK_RATES[code];
-    });
-
-    writeCache(rates, fetchedAt, date);
-    return { base: FX_BASE, rates, status: 'live', updatedAt: fetchedAt, date, source: 'network' };
+    return await res.json();
   } finally {
     clearTimeout(timer);
   }
+}
+
+function normalizeRates(rawRates) {
+  const rates = { [FX_BASE]: 1 };
+  TARGET_CODES.forEach((code) => {
+    const value = Number(rawRates?.[code]);
+    rates[code] = Number.isFinite(value) && value > 0 ? value : FALLBACK_RATES[code];
+  });
+  return rates;
+}
+
+async function fetchFromBackend() {
+  const payload = await fetchJson(`${API_BASE_URL}/currency/rates?base=${FX_BASE}`);
+  return {
+    rates: normalizeRates(payload?.rates),
+    date: payload?.date || null,
+    source: payload?.source === 'live' ? 'backend' : 'backend-cache',
+  };
+}
+
+async function fetchFromUpstream() {
+  const url = `${FX_ENDPOINT}?from=${FX_BASE}&to=${TARGET_CODES.join(',')}`;
+  const payload = await fetchJson(url);
+  return { rates: normalizeRates(payload?.rates), date: payload?.date || null, source: 'network' };
+}
+
+/**
+ * Fetch the latest rates. Tries the backend service first (server-side cache),
+ * then the upstream provider directly, and lets the caller fall back to static
+ * rates if both fail.
+ * @returns {Promise<{base:string, rates:Object<string,number>, status:string,
+ *   updatedAt:number, date:string|null, source:string}>}
+ */
+export async function fetchRates() {
+  let lastError;
+  for (const attempt of [fetchFromBackend, fetchFromUpstream]) {
+    try {
+      const { rates, date, source } = await attempt();
+      const fetchedAt = Date.now();
+      writeCache(rates, fetchedAt, date);
+      return { base: FX_BASE, rates, status: 'live', updatedAt: fetchedAt, date, source };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error('All FX sources failed');
 }
 
 /**

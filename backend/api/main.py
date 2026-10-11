@@ -20,6 +20,7 @@ from risk_engine.framework_mapper import get_compliance_posture, get_compliance_
 from api.chat import router as chat_router
 from api.upload import router as upload_router
 from api.live_feed import router as live_feed_router
+from api.currency import router as currency_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -32,6 +33,7 @@ app = FastAPI(
 app.include_router(chat_router)
 app.include_router(upload_router)
 app.include_router(live_feed_router)
+app.include_router(currency_router)
 
 # --- CORS: required so the frontend dashboard (running on a different
 # port, e.g. localhost:3000 or localhost:5173) can call this API.
